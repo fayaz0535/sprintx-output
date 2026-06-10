@@ -1,8 +1,6 @@
 ```typescript
-'use client';
-
-import { useState, FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, FormEvent } from 'react';
+import { useRouter } from 'next/router';
 
 interface LoginFormProps {
   onSuccess?: () => void;
@@ -20,7 +18,7 @@ interface FormErrors {
   general?: string;
 }
 
-export default function LoginForm({ onSuccess }: LoginFormProps) {
+const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   const router = useRouter();
   const [formData, setFormData] = useState<FormData>({
     email: '',
@@ -32,7 +30,7 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
   const [showPassword, setShowPassword] = useState(false);
 
   const validateEmail = (email: string): string | undefined => {
-    if (!email.trim()) {
+    if (!email) {
       return 'Email is required';
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -49,32 +47,28 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
     return undefined;
   };
 
-  const validateForm = (): boolean => {
-    const newErrors: FormErrors = {};
-    const emailError = validateEmail(formData.email);
-    const passwordError = validatePassword(formData.password);
-
-    if (emailError) newErrors.email = emailError;
-    if (passwordError) newErrors.password = passwordError;
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
   const handleEmailBlur = () => {
     const emailError = validateEmail(formData.email);
-    setErrors(prev => ({ ...prev, email: emailError }));
+    setErrors((prev) => ({ ...prev, email: emailError }));
   };
 
   const handlePasswordBlur = () => {
     const passwordError = validatePassword(formData.password);
-    setErrors(prev => ({ ...prev, password: passwordError }));
+    setErrors((prev) => ({ ...prev, password: passwordError }));
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    
-    if (!validateForm()) {
+
+    // Validate all fields
+    const emailError = validateEmail(formData.email);
+    const passwordError = validatePassword(formData.password);
+
+    if (emailError || passwordError) {
+      setErrors({
+        email: emailError,
+        password: passwordError,
+      });
       return;
     }
 
@@ -114,25 +108,31 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
         sessionStorage.setItem('refresh_token', data.refresh_token);
       }
 
+      // Call success callback or redirect
       if (onSuccess) {
         onSuccess();
       } else {
         router.push('/dashboard');
       }
     } catch (error) {
-      setErrors({ general: 'Network error. Please check your connection and try again.' });
+      setErrors({ general: 'An error occurred. Please try again.' });
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const handleForgotPassword = () => {
+    router.push('/auth/forgot-password');
+  };
+
   return (
     <div className="w-full max-w-md mx-auto px-4 sm:px-0">
       <form onSubmit={handleSubmit} className="space-y-6" noValidate>
+        {/* General Error Banner */}
         {errors.general && (
           <div
             role="alert"
-            className="bg-red-50 border border-red-200 rounded-md p-4 flex items-start gap-3"
+            className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg"
           >
             <svg
               className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5"
@@ -150,12 +150,13 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
           </div>
         )}
 
+        {/* Email Field */}
         <div>
           <label
             htmlFor="email"
             className="block text-sm font-medium text-gray-900 mb-2"
           >
-            Email
+            Email <span className="text-red-600">*</span>
           </label>
           <input
             id="email"
@@ -165,15 +166,15 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
             required
             disabled={isSubmitting}
             value={formData.email}
-            onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+            onChange={(e) =>
+              setFormData((prev) => ({ ...prev, email: e.target.value }))
+            }
             onBlur={handleEmailBlur}
-            className={`
-              w-full px-3 py-2 border rounded-md shadow-sm
-              text-base text-gray-900 placeholder-gray-400
-              focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-0 focus:border-transparent
-              disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed
-              ${errors.email ? 'border-red-300 bg-red-50' : 'border-gray-300 bg-white'}
-            `}
+            className={`block w-full px-3 py-2 border rounded-md shadow-sm text-base placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors ${
+              errors.email
+                ? 'border-red-600 bg-red-50'
+                : 'border-gray-300 bg-white'
+            } ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
             placeholder="you@example.com"
             aria-invalid={errors.email ? 'true' : 'false'}
             aria-describedby={errors.email ? 'email-error' : undefined}
@@ -182,10 +183,10 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
             <div
               id="email-error"
               role="alert"
-              className="mt-2 flex items-center gap-1.5"
+              className="flex items-center gap-1 mt-2 text-sm text-red-600"
             >
               <svg
-                className="w-4 h-4 text-red-600 flex-shrink-0"
+                className="w-4 h-4 flex-shrink-0"
                 fill="currentColor"
                 viewBox="0 0 20 20"
                 aria-hidden="true"
@@ -196,17 +197,18 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
                   clipRule="evenodd"
                 />
               </svg>
-              <span className="text-sm text-red-600">{errors.email}</span>
+              <span>{errors.email}</span>
             </div>
           )}
         </div>
 
+        {/* Password Field */}
         <div>
           <label
             htmlFor="password"
             className="block text-sm font-medium text-gray-900 mb-2"
           >
-            Password
+            Password <span className="text-red-600">*</span>
           </label>
           <div className="relative">
             <input
@@ -217,15 +219,15 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
               required
               disabled={isSubmitting}
               value={formData.password}
-              onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, password: e.target.value }))
+              }
               onBlur={handlePasswordBlur}
-              className={`
-                w-full px-3 py-2 pr-12 border rounded-md shadow-sm
-                text-base text-gray-900 placeholder-gray-400
-                focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-0 focus:border-transparent
-                disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed
-                ${errors.password ? 'border-red-300 bg-red-50' : 'border-gray-300 bg-white'}
-              `}
+              className={`block w-full px-3 py-2 pr-12 border rounded-md shadow-sm text-base placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors ${
+                errors.password
+                  ? 'border-red-600 bg-red-50'
+                  : 'border-gray-300 bg-white'
+              } ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
               placeholder="••••••••"
               aria-invalid={errors.password ? 'true' : 'false'}
               aria-describedby={errors.password ? 'password-error' : undefined}
@@ -234,21 +236,41 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               disabled={isSubmitting}
-              className="absolute right-0 top-0 h-full px-3 flex items-center text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-0 rounded-r-md disabled:text-gray-400 disabled:cursor-not-allowed min-w-[44px] min-h-[44px]"
+              className="absolute inset-y-0 right-0 flex items-center justify-center w-11 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 rounded-r-md transition-colors"
               aria-label={showPassword ? 'Hide password' : 'Show password'}
+              style={{ minWidth: '44px', minHeight: '44px' }}
             >
               {showPassword ? (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                  />
                 </svg>
               ) : (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
-              )}
-            </button>
-          </div>
-          {errors.password && (
-            <div
-              id="password-
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943

@@ -7,6 +7,18 @@ export interface User {
   lastLoginAt: string | null;
 }
 
+export interface Session {
+  id: string;
+  userId: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+  rememberMe: boolean;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
+}
+
 export interface LoginCredentials {
   email: string;
   password: string;
@@ -52,52 +64,15 @@ export interface VerifyTokenResponse {
   user?: User;
 }
 
-export interface LogoutResponse {
-  message: string;
-}
-
-export interface Session {
-  id: string;
-  userId: string;
-  accessTokenHash: string;
-  refreshTokenHash: string;
-  expiresAt: string;
-  rememberMe: boolean;
-  ipAddress: string | null;
-  userAgent: string | null;
-  createdAt: string;
-}
-
-export interface LoginAttempt {
-  id: string;
-  email: string;
-  ipAddress: string;
-  successful: boolean;
-  attemptedAt: string;
-}
-
-export interface PasswordResetToken {
-  id: string;
-  userId: string;
-  tokenHash: string;
-  expiresAt: string;
-  usedAt: string | null;
-  createdAt: string;
-}
-
 export interface AuthError {
   message: string;
   field?: string;
   code?: string;
 }
 
-export interface AuthState {
-  user: User | null;
-  accessToken: string | null;
-  refreshToken: string | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  error: AuthError | null;
+export interface ValidationError {
+  field: string;
+  message: string;
 }
 
 export interface LoginFormData {
@@ -112,41 +87,39 @@ export interface LoginFormErrors {
   general?: string;
 }
 
-export interface ForgotPasswordFormData {
+export interface AuthState {
+  user: User | null;
+  accessToken: string | null;
+  refreshToken: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: AuthError | null;
+}
+
+export interface PasswordResetToken {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+  usedAt: string | null;
+  createdAt: string;
+}
+
+export interface LoginAttempt {
+  id: string;
   email: string;
-}
-
-export interface ForgotPasswordFormErrors {
-  email?: string;
-  general?: string;
-}
-
-export interface ResetPasswordFormData {
-  password: string;
-  confirmPassword: string;
-}
-
-export interface ResetPasswordFormErrors {
-  password?: string;
-  confirmPassword?: string;
-  general?: string;
+  ipAddress: string;
+  successful: boolean;
+  attemptedAt: string;
 }
 
 export type AuthAction =
   | { type: 'LOGIN_START' }
-  | { type: 'LOGIN_SUCCESS'; payload: LoginResponse }
+  | { type: 'LOGIN_SUCCESS'; payload: { user: User; accessToken: string; refreshToken: string } }
   | { type: 'LOGIN_FAILURE'; payload: AuthError }
   | { type: 'LOGOUT' }
-  | { type: 'REFRESH_TOKEN_SUCCESS'; payload: RefreshTokenResponse }
+  | { type: 'REFRESH_TOKEN_SUCCESS'; payload: { accessToken: string; refreshToken: string } }
   | { type: 'REFRESH_TOKEN_FAILURE' }
   | { type: 'SET_USER'; payload: User }
   | { type: 'CLEAR_ERROR' };
-
-export interface AuthContextValue {
-  state: AuthState;
-  login: (credentials: LoginCredentials) => Promise<void>;
-  logout: () => Promise<void>;
-  refreshToken: () => Promise<void>;
-  clearError: () => void;
-}
 ```
