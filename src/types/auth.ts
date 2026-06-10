@@ -5,48 +5,42 @@ export interface LoginCredentials {
 }
 
 export interface LoginResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  expires_in: number;
   user: User;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
 }
 
 export interface User {
   id: string;
   email: string;
-  first_name: string | null;
-  last_name: string | null;
-  is_active: boolean;
-  last_login_at: string | null;
-  created_at: string;
-  updated_at: string;
+  firstName: string | null;
+  lastName: string | null;
+  isActive: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Session {
   id: string;
-  user_id: string;
-  token_hash: string;
-  refresh_token_hash: string;
-  expires_at: string;
-  ip_address: string | null;
-  user_agent: string | null;
-  created_at: string;
+  userId: string;
+  tokenHash: string;
+  refreshTokenHash: string;
+  expiresAt: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
 }
 
 export interface RefreshTokenRequest {
-  refresh_token: string;
+  refreshToken: string;
 }
 
 export interface RefreshTokenResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  expires_in: number;
-}
-
-export interface LogoutRequest {
-  refresh_token?: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
 }
 
 export interface ForgotPasswordRequest {
@@ -55,50 +49,18 @@ export interface ForgotPasswordRequest {
 
 export interface ForgotPasswordResponse {
   message: string;
-  email: string;
 }
 
 export interface ValidateSessionResponse {
   valid: boolean;
   user?: User;
-  expires_at?: string;
-}
-
-export interface PasswordResetToken {
-  id: string;
-  user_id: string;
-  token_hash: string;
-  expires_at: string;
-  is_valid: boolean;
-  used_at: string | null;
-  created_at: string;
-}
-
-export interface LoginAttempt {
-  id: string;
-  email: string;
-  ip_address: string;
-  success: boolean;
-  failure_reason: string | null;
-  attempted_at: string;
+  expiresAt?: string;
 }
 
 export interface AuthError {
   message: string;
-  code?: string;
+  code: string;
   field?: string;
-}
-
-export interface ValidationErrors {
-  email?: string;
-  password?: string;
-}
-
-export interface AuthState {
-  user: User | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  error: string | null;
 }
 
 export interface LoginFormData {
@@ -112,32 +74,45 @@ export interface LoginFormErrors {
   general?: string;
 }
 
-export interface AuthContextValue {
-  user: User | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  error: string | null;
-  login: (credentials: LoginCredentials) => Promise<void>;
-  logout: () => Promise<void>;
-  refreshToken: () => Promise<void>;
-  clearError: () => void;
+export interface LoginFormState {
+  data: LoginFormData;
+  errors: LoginFormErrors;
+  isSubmitting: boolean;
+  showPassword: boolean;
 }
 
-export type AuthActionType =
-  | 'LOGIN_START'
-  | 'LOGIN_SUCCESS'
-  | 'LOGIN_FAILURE'
-  | 'LOGOUT_START'
-  | 'LOGOUT_SUCCESS'
-  | 'LOGOUT_FAILURE'
-  | 'REFRESH_TOKEN_SUCCESS'
-  | 'REFRESH_TOKEN_FAILURE'
-  | 'VALIDATE_SESSION_SUCCESS'
-  | 'VALIDATE_SESSION_FAILURE'
-  | 'CLEAR_ERROR';
+export interface PasswordResetToken {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+  isValid: boolean;
+  usedAt: string | null;
+  createdAt: string;
+}
 
-export interface AuthAction {
-  type: AuthActionType;
-  payload?: any;
+export interface LoginAttempt {
+  id: string;
+  email: string;
+  ipAddress: string;
+  success: boolean;
+  failureReason: string | null;
+  attemptedAt: string;
+}
+
+export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'unauthenticated' | 'error';
+
+export interface AuthState {
+  status: AuthStatus;
+  user: User | null;
+  accessToken: string | null;
+  error: AuthError | null;
+}
+
+export interface AuthContextValue extends AuthState {
+  login: (credentials: LoginCredentials) => Promise<void>;
+  logout: () => Promise<void>;
+  refreshSession: () => Promise<void>;
+  validateSession: () => Promise<boolean>;
 }
 ```

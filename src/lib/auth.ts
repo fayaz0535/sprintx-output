@@ -1,20 +1,13 @@
 ```typescript
-import { z } from 'zod';
+import axios from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-// Validation schemas
-export const loginSchema = z.object({
-  email: z
-    .string()
-    .min(1, 'Email is required')
-    .email('Please enter a valid email address'),
-  password: z.string().min(1, 'Password is required'),
-});
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
 
-export type LoginFormData = z.infer<typeof loginSchema>;
-
-// API response types
 export interface AuthTokens {
   access_token: string;
   refresh_token: string;
@@ -33,192 +26,255 @@ export interface User {
   updated_at: string;
 }
 
-export interface LoginResponse {
+export interface AuthResponse {
   user: User;
   tokens: AuthTokens;
 }
 
-export interface ApiError {
-  detail: string;
-  status_code?: number;
+export interface AuthError {
+  message: string;
+  code?: string;
 }
 
-// Auth service functions
-export const authService = {
-  async login(credentials: LoginFormData): Promise<LoginResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(credentials),
-      credentials: 'include',
-    });
+const TOKEN_KEY = 'auth_token';
+const REFRESH_TOKEN_KEY = 'refresh_token';
 
-    if (!response.ok) {
-      const error: ApiError = await response.json().catch(() => ({
-        detail: 'Invalid email or password. Please try again.',
-      }));
-      throw new Error(error.detail || 'Invalid email or password. Please try again.');
+export class AuthService {
+  private static instance: AuthService;
+
+  private constructor() {}
+
+  public static getInstance(): AuthService {
+    if (!AuthService.instance) {
+      AuthService.instance = new AuthService();
     }
+    return AuthService.instance;
+  }
 
-    const data: LoginResponse = await response.json();
-    
-    // Store tokens
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('access_token', data.tokens.access_token);
-      localStorage.setItem('refresh_token', data.tokens.refresh_token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-    }
-
-    return data;
-  },
-
-  async logout(): Promise<void> {
-    const accessToken = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
-
+  public async login(credentials: LoginCredentials): Promise<AuthResponse> {
     try {
-      await fetch(`${API_BASE_URL}/api/auth/logout`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
-        },
-        credentials: 'include',
-      });
+      const response = await axios.post<AuthResponse>(
+        `${API_BASE_URL}/api/auth/login`,
+        credentials,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const { tokens, user } = response.data;
+      
+      this.setTokens(tokens.access_token, tokens.refresh_token);
+      
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 401) {
+          throw new Error('Invalid email or password. Please try again.');
+        }
+        if (error.response?.status === 429) {
+          throw new Error('Too many login attempts. Please try again later.');
+        }
+        throw new Error(
+          error.response?.data?.message || 'An error occurred during login. Please try again.'
+        );
+      }
+      throw new Error('Network error. Please check your connection and try again.');
+    }
+  }
+
+  public async logout(): Promise<void> {
+    try {
+      const token = this.getAccessToken();
+      if (token) {
+        await axios.post(
+          `${API_BASE_URL}/api/auth/logout`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+      }
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user');
-      }
+      this.clearTokens();
     }
-  },
+  }
 
-  async refreshToken(): Promise<AuthTokens> {
-    const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : null;
-
-    if (!refreshToken) {
-      throw new Error('No refresh token available');
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-      credentials: 'include',
-    });
-
-    if (!response.ok) {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user');
+  public async refreshToken(): Promise<AuthTokens> {
+    try {
+      const refreshToken = this.getRefreshToken();
+      if (!refreshToken) {
+        throw new Error('No refresh token available');
       }
+
+      const response = await axios.post<AuthTokens>(
+        `${API_BASE_URL}/api/auth/refresh`,
+        { refresh_token: refreshToken },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const tokens = response.data;
+      this.setTokens(tokens.access_token, tokens.refresh_token);
+      
+      return tokens;
+    } catch (error) {
+      this.clearTokens();
       throw new Error('Session expired. Please login again.');
     }
+  }
 
-    const tokens: AuthTokens = await response.json();
-
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('access_token', tokens.access_token);
-      localStorage.setItem('refresh_token', tokens.refresh_token);
-    }
-
-    return tokens;
-  },
-
-  async validateSession(): Promise<boolean> {
-    const accessToken = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
-
-    if (!accessToken) {
-      return false;
-    }
-
+  public async validateSession(): Promise<boolean> {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/validate-session`, {
-        method: 'GET',
+      const token = this.getAccessToken();
+      if (!token) {
+        return false;
+      }
+
+      const response = await axios.get(`${API_BASE_URL}/api/auth/validate-session`, {
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${token}`,
         },
-        credentials: 'include',
       });
 
-      if (!response.ok) {
-        // Try to refresh token
+      return response.status === 200;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
         try {
           await this.refreshToken();
           return true;
-        } catch {
+        } catch (refreshError) {
           return false;
         }
       }
-
-      return true;
-    } catch (error) {
-      console.error('Session validation error:', error);
       return false;
     }
-  },
+  }
 
-  async requestPasswordReset(email: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ email }),
-    });
-
-    if (!response.ok) {
-      const error: ApiError = await response.json().catch(() => ({
-        detail: 'Failed to process password reset request',
-      }));
-      throw new Error(error.detail);
-    }
-  },
-
-  getAccessToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem('access_token');
-  },
-
-  getUser(): User | null {
-    if (typeof window === 'undefined') return null;
-    const userStr = localStorage.getItem('user');
-    if (!userStr) return null;
+  public async getUserProfile(): Promise<User> {
     try {
-      return JSON.parse(userStr) as User;
-    } catch {
-      return null;
-    }
-  },
+      const token = this.getAccessToken();
+      if (!token) {
+        throw new Error('No access token available');
+      }
 
-  isAuthenticated(): boolean {
-    return this.getAccessToken() !== null;
-  },
-};
-
-// Validation helper
-export function validateLoginForm(data: LoginFormData): { success: boolean; errors?: Record<string, string> } {
-  try {
-    loginSchema.parse(data);
-    return { success: true };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      const errors: Record<string, string> = {};
-      error.errors.forEach((err) => {
-        if (err.path[0]) {
-          errors[err.path[0].toString()] = err.message;
-        }
+      const response = await axios.get<User>(`${API_BASE_URL}/api/user/profile`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
-      return { success: false, errors };
+
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        try {
+          await this.refreshToken();
+          return this.getUserProfile();
+        } catch (refreshError) {
+          throw new Error('Session expired. Please login again.');
+        }
+      }
+      throw new Error('Failed to fetch user profile.');
     }
-    return { success: false, errors: { general: 'Validation failed' } };
+  }
+
+  public async requestPasswordReset(email: string): Promise<void> {
+    try {
+      await axios.post(
+        `${API_BASE_URL}/api/auth/forgot-password`,
+        { email },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        throw new Error(
+          error.response?.data?.message || 'Failed to send password reset email.'
+        );
+      }
+      throw new Error('Network error. Please try again.');
+    }
+  }
+
+  public setTokens(accessToken: string, refreshToken: string): void {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(TOKEN_KEY, accessToken);
+      localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    }
+  }
+
+  public getAccessToken(): string | null {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(TOKEN_KEY);
+    }
+    return null;
+  }
+
+  public getRefreshToken(): string | null {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(REFRESH_TOKEN_KEY);
+    }
+    return null;
+  }
+
+  public clearTokens(): void {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+    }
+  }
+
+  public isAuthenticated(): boolean {
+    return !!this.getAccessToken();
   }
 }
+
+export const authService = AuthService.getInstance();
+
+export const validateEmail = (email: string): string | null => {
+  if (!email || email.trim() === '') {
+    return 'Email is required';
+  }
+  
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return 'Please enter a valid email address';
+  }
+  
+  return null;
+};
+
+export const validatePassword = (password: string): string | null => {
+  if (!password || password.trim() === '') {
+    return 'Password is required';
+  }
+  
+  return null;
+};
+
+export const validateLoginForm = (
+  email: string,
+  password: string
+): { email: string | null; password: string | null; isValid: boolean } => {
+  const emailError = validateEmail(email);
+  const passwordError = validatePassword(password);
+  
+  return {
+    email: emailError,
+    password: passwordError,
+    isValid: !emailError && !passwordError,
+  };
+};
+```
 ```
