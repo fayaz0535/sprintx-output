@@ -1,10 +1,28 @@
 ```typescript
+export interface LoginCredentials {
+  email: string;
+  password: string;
+  rememberMe?: boolean;
+}
+
+export interface RegisterCredentials {
+  email: string;
+  password: string;
+  confirmPassword?: string;
+}
+
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+}
+
 export interface User {
   id: string;
   email: string;
   createdAt: string;
   updatedAt: string;
-  lastLoginAt: string | null;
+  lastLoginAt?: string;
 }
 
 export interface Session {
@@ -14,32 +32,20 @@ export interface Session {
   refreshTokenHash: string;
   expiresAt: string;
   rememberMe: boolean;
-  ipAddress: string | null;
-  userAgent: string | null;
+  ipAddress?: string;
+  userAgent?: string;
   createdAt: string;
 }
 
-export interface LoginCredentials {
-  email: string;
-  password: string;
-  rememberMe?: boolean;
-}
-
-export interface LoginResponse {
+export interface AuthResponse {
   user: User;
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: string;
+  tokens: AuthTokens;
 }
 
-export interface RefreshTokenRequest {
-  refreshToken: string;
-}
+export interface LoginResponse extends AuthResponse {}
 
 export interface RefreshTokenResponse {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: string;
+  tokens: AuthTokens;
 }
 
 export interface ForgotPasswordRequest {
@@ -52,22 +58,23 @@ export interface ForgotPasswordResponse {
 
 export interface ResetPasswordRequest {
   token: string;
-  password: string;
+  newPassword: string;
+  confirmPassword?: string;
 }
 
 export interface ResetPasswordResponse {
   message: string;
 }
 
-export interface VerifyTokenResponse {
+export interface VerifyAuthResponse {
   valid: boolean;
   user?: User;
 }
 
 export interface AuthError {
   message: string;
-  field?: string;
   code?: string;
+  field?: string;
 }
 
 export interface LoginAttempt {
@@ -83,70 +90,36 @@ export interface PasswordResetToken {
   userId: string;
   tokenHash: string;
   expiresAt: string;
-  usedAt: string | null;
+  usedAt?: string;
   createdAt: string;
 }
 
 export interface AuthState {
   user: User | null;
-  accessToken: string | null;
-  refreshToken: string | null;
+  tokens: AuthTokens | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: AuthError | null;
 }
 
-export interface LoginFormData {
-  email: string;
-  password: string;
-  rememberMe: boolean;
+export interface ValidationError {
+  field: string;
+  message: string;
 }
 
-export interface LoginFormErrors {
-  email?: string;
-  password?: string;
-  general?: string;
-}
-
-export interface ForgotPasswordFormData {
-  email: string;
-}
-
-export interface ForgotPasswordFormErrors {
-  email?: string;
-  general?: string;
-}
-
-export interface ResetPasswordFormData {
-  password: string;
-  confirmPassword: string;
-}
-
-export interface ResetPasswordFormErrors {
-  password?: string;
-  confirmPassword?: string;
-  general?: string;
-}
-
-export type AuthAction =
-  | { type: 'LOGIN_START' }
-  | { type: 'LOGIN_SUCCESS'; payload: LoginResponse }
-  | { type: 'LOGIN_FAILURE'; payload: AuthError }
-  | { type: 'LOGOUT' }
-  | { type: 'REFRESH_TOKEN_START' }
-  | { type: 'REFRESH_TOKEN_SUCCESS'; payload: RefreshTokenResponse }
-  | { type: 'REFRESH_TOKEN_FAILURE'; payload: AuthError }
-  | { type: 'VERIFY_TOKEN_START' }
-  | { type: 'VERIFY_TOKEN_SUCCESS'; payload: User }
-  | { type: 'VERIFY_TOKEN_FAILURE'; payload: AuthError }
-  | { type: 'CLEAR_ERROR' };
+export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 
 export interface AuthContextValue {
-  state: AuthState;
+  user: User | null;
+  tokens: AuthTokens | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: AuthError | null;
   login: (credentials: LoginCredentials) => Promise<void>;
   logout: () => Promise<void>;
   refreshToken: () => Promise<void>;
-  verifyToken: () => Promise<void>;
+  resetPassword: (request: ResetPasswordRequest) => Promise<void>;
+  forgotPassword: (request: ForgotPasswordRequest) => Promise<void>;
   clearError: () => void;
 }
 ```

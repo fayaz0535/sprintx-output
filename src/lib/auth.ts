@@ -2,23 +2,34 @@
 import { jwtVerify, SignJWT } from 'jose';
 
 const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || 'your-secret-key-change-in-production'
+  process.env.JWT_SECRET || 'your-secret-key-min-32-characters-long'
 );
 
-const REFRESH_SECRET = new TextEncoder().encode(
-  process.env.REFRESH_SECRET || 'your-refresh-secret-key-change-in-production'
-);
+const JWT_ACCESS_EXPIRY = '15m';
+const JWT_REFRESH_EXPIRY_SESSION = '24h';
+const JWT_REFRESH_EXPIRY_REMEMBER = '30d';
 
-export interface TokenPayload {
-  userId: string;
+export interface User {
+  id: string;
   email: string;
-  sessionId: string;
+  created_at: string;
+  updated_at: string;
+  last_login_at?: string;
 }
 
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
   expiresIn: number;
+}
+
+export interface DecodedToken {
+  userId: string;
+  email: string;
+  type: 'access' | 'refresh';
+  sessionId?: string;
+  exp: number;
+  iat: number;
 }
 
 export interface LoginCredentials {
@@ -28,232 +39,167 @@ export interface LoginCredentials {
 }
 
 export interface LoginResponse {
-  success: boolean;
-  tokens?: AuthTokens;
-  user?: {
-    id: string;
-    email: string;
-  };
-  error?: string;
+  user: User;
+  tokens: AuthTokens;
 }
 
-export interface VerifyResponse {
-  valid: boolean;
-  payload?: TokenPayload;
-  error?: string;
+export interface ApiError {
+  message: string;
+  field?: string;
+  code?: string;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+export class AuthenticationError extends Error {
+  constructor(
+    message: string,
+    public field?: string,
+    public code?: string
+  ) {
+    super(message);
+    this.name = 'AuthenticationError';
+  }
+}
 
-/**
- * Generate JWT access token
- */
-export async function generateAccessToken(payload: TokenPayload): Promise<string> {
-  const token = await new SignJWT({ ...payload })
+export async function generateAccessToken(
+  userId: string,
+  email: string,
+  sessionId?: string
+): Promise<string> {
+  return await new SignJWT({ userId, email, type: 'access', sessionId })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime('15m')
+    .setExpirationTime(JWT_ACCESS_EXPIRY)
     .sign(JWT_SECRET);
-
-  return token;
 }
 
-/**
- * Generate JWT refresh token
- */
-export async function generateRefreshToken(payload: TokenPayload, rememberMe: boolean = false): Promise<string> {
-  const expirationTime = rememberMe ? '30d' : '7d';
+export async function generateRefreshToken(
+  userId: string,
+  email: string,
+  sessionId: string,
+  rememberMe: boolean = false
+): Promise<string> {
+  const expiry = rememberMe ? JWT_REFRESH_EXPIRY_REMEMBER : JWT_REFRESH_EXPIRY_SESSION;
   
-  const token = await new SignJWT({ ...payload })
+  return await new SignJWT({ userId, email, type: 'refresh', sessionId })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime(expirationTime)
-    .sign(REFRESH_SECRET);
-
-  return token;
+    .setExpirationTime(expiry)
+    .sign(JWT_SECRET);
 }
 
-/**
- * Verify JWT access token
- */
-export async function verifyAccessToken(token: string): Promise<VerifyResponse> {
+export async function verifyToken(token: string): Promise<DecodedToken> {
   try {
     const { payload } = await jwtVerify(token, JWT_SECRET);
-    
-    return {
-      valid: true,
-      payload: payload as TokenPayload,
-    };
+    return payload as DecodedToken;
   } catch (error) {
-    return {
-      valid: false,
-      error: error instanceof Error ? error.message : 'Invalid token',
-    };
+    throw new AuthenticationError('Invalid or expired token', undefined, 'TOKEN_INVALID');
   }
 }
 
-/**
- * Verify JWT refresh token
- */
-export async function verifyRefreshToken(token: string): Promise<VerifyResponse> {
-  try {
-    const { payload } = await jwtVerify(token, REFRESH_SECRET);
-    
-    return {
-      valid: true,
-      payload: payload as TokenPayload,
-    };
-  } catch (error) {
-    return {
-      valid: false,
-      error: error instanceof Error ? error.message : 'Invalid refresh token',
-    };
-  }
-}
-
-/**
- * Login with email and password
- */
 export async function login(credentials: LoginCredentials): Promise<LoginResponse> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  
   try {
-    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    const response = await fetch(`${apiUrl}/api/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(credentials),
+      body: JSON.stringify({
+        email: credentials.email,
+        password: credentials.password,
+        remember_me: credentials.rememberMe || false,
+      }),
       credentials: 'include',
     });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Invalid email or password' }));
+      throw new AuthenticationError(
+        error.message || 'Invalid email or password',
+        error.field,
+        error.code || 'AUTH_FAILED'
+      );
+    }
 
     const data = await response.json();
-
-    if (!response.ok) {
-      return {
-        success: false,
-        error: data.message || 'Invalid email or password',
-      };
-    }
-
-    return {
-      success: true,
-      tokens: data.tokens,
-      user: data.user,
-    };
+    return data as LoginResponse;
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'An error occurred during login',
-    };
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+    throw new AuthenticationError('Unable to connect to server. Please try again.', undefined, 'NETWORK_ERROR');
   }
 }
 
-/**
- * Refresh access token using refresh token
- */
-export async function refreshAccessToken(refreshToken: string): Promise<LoginResponse> {
+export async function logout(): Promise<void> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  
   try {
-    const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+    await fetch(`${apiUrl}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+  }
+}
+
+export async function refreshAccessToken(refreshToken: string): Promise<AuthTokens> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  
+  try {
+    const response = await fetch(`${apiUrl}/api/auth/refresh`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ refreshToken }),
+      body: JSON.stringify({ refresh_token: refreshToken }),
       credentials: 'include',
     });
+
+    if (!response.ok) {
+      throw new AuthenticationError('Session expired. Please log in again.', undefined, 'REFRESH_FAILED');
+    }
 
     const data = await response.json();
-
-    if (!response.ok) {
-      return {
-        success: false,
-        error: data.message || 'Failed to refresh token',
-      };
-    }
-
-    return {
-      success: true,
-      tokens: data.tokens,
-      user: data.user,
-    };
+    return data.tokens as AuthTokens;
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'An error occurred during token refresh',
-    };
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+    throw new AuthenticationError('Unable to refresh session. Please log in again.', undefined, 'REFRESH_ERROR');
   }
 }
 
-/**
- * Logout user and invalidate session
- */
-export async function logout(accessToken: string): Promise<{ success: boolean; error?: string }> {
+export async function verifyAuth(): Promise<User> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  
   try {
-    const response = await fetch(`${API_BASE_URL}/api/auth/logout`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      credentials: 'include',
-    });
-
-    if (!response.ok) {
-      const data = await response.json();
-      return {
-        success: false,
-        error: data.message || 'Logout failed',
-      };
-    }
-
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'An error occurred during logout',
-    };
-  }
-}
-
-/**
- * Verify current session/token
- */
-export async function verifySession(accessToken: string): Promise<VerifyResponse> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/auth/verify`, {
+    const response = await fetch(`${apiUrl}/api/auth/verify`, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-      },
       credentials: 'include',
     });
 
     if (!response.ok) {
-      return {
-        valid: false,
-        error: 'Session invalid',
-      };
+      throw new AuthenticationError('Not authenticated', undefined, 'NOT_AUTHENTICATED');
     }
 
     const data = await response.json();
-
-    return {
-      valid: true,
-      payload: data.user,
-    };
+    return data.user as User;
   } catch (error) {
-    return {
-      valid: false,
-      error: error instanceof Error ? error.message : 'Session verification failed',
-    };
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+    throw new AuthenticationError('Unable to verify authentication', undefined, 'VERIFY_ERROR');
   }
 }
 
-/**
- * Request password reset
- */
-export async function forgotPassword(email: string): Promise<{ success: boolean; error?: string }> {
+export async function requestPasswordReset(email: string): Promise<void> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  
   try {
-    const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
+    const response = await fetch(`${apiUrl}/api/auth/forgot-password`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -261,182 +207,125 @@ export async function forgotPassword(email: string): Promise<{ success: boolean;
       body: JSON.stringify({ email }),
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
-      return {
-        success: false,
-        error: data.message || 'Failed to send reset email',
-      };
+      const error = await response.json().catch(() => ({ message: 'Failed to send reset email' }));
+      throw new AuthenticationError(error.message || 'Failed to send reset email', undefined, 'RESET_FAILED');
     }
-
-    return { success: true };
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'An error occurred',
-    };
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+    throw new AuthenticationError('Unable to send password reset email', undefined, 'NETWORK_ERROR');
   }
 }
 
-/**
- * Reset password with token
- */
-export async function resetPassword(
-  token: string,
-  newPassword: string
-): Promise<{ success: boolean; error?: string }> {
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  
   try {
-    const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+    const response = await fetch(`${apiUrl}/api/auth/reset-password`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ token, password: newPassword }),
+      body: JSON.stringify({ token, new_password: newPassword }),
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
-      return {
-        success: false,
-        error: data.message || 'Failed to reset password',
-      };
+      const error = await response.json().catch(() => ({ message: 'Failed to reset password' }));
+      throw new AuthenticationError(error.message || 'Failed to reset password', undefined, 'RESET_FAILED');
     }
-
-    return { success: true };
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'An error occurred',
-    };
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+    throw new AuthenticationError('Unable to reset password', undefined, 'NETWORK_ERROR');
   }
 }
 
-/**
- * Get user profile
- */
-export async function getUserProfile(accessToken: string): Promise<{
-  success: boolean;
-  user?: any;
-  error?: string;
-}> {
+export async function getUserProfile(): Promise<User> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  
   try {
-    const response = await fetch(`${API_BASE_URL}/api/user/profile`, {
+    const response = await fetch(`${apiUrl}/api/user/profile`, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-      },
       credentials: 'include',
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
-      return {
-        success: false,
-        error: data.message || 'Failed to fetch user profile',
-      };
+      throw new AuthenticationError('Failed to fetch user profile', undefined, 'PROFILE_FAILED');
     }
 
-    return {
-      success: true,
-      user: data.user,
-    };
+    const data = await response.json();
+    return data.user as User;
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'An error occurred',
-    };
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+    throw new AuthenticationError('Unable to fetch user profile', undefined, 'NETWORK_ERROR');
   }
 }
 
-/**
- * Store tokens in appropriate storage
- */
-export function storeTokens(tokens: AuthTokens, rememberMe: boolean = false): void {
+export function setAuthTokens(tokens: AuthTokens): void {
   if (typeof window === 'undefined') return;
-
-  const storage = rememberMe ? localStorage : sessionStorage;
   
-  storage.setItem('accessToken', tokens.accessToken);
-  storage.setItem('refreshToken', tokens.refreshToken);
-  storage.setItem('tokenExpiry', String(Date.now() + tokens.expiresIn * 1000));
+  localStorage.setItem('accessToken', tokens.accessToken);
+  localStorage.setItem('refreshToken', tokens.refreshToken);
+  localStorage.setItem('tokenExpiry', (Date.now() + tokens.expiresIn * 1000).toString());
 }
 
-/**
- * Get stored access token
- */
 export function getAccessToken(): string | null {
   if (typeof window === 'undefined') return null;
-
-  return localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+  return localStorage.getItem('accessToken');
 }
 
-/**
- * Get stored refresh token
- */
 export function getRefreshToken(): string | null {
   if (typeof window === 'undefined') return null;
-
-  return localStorage.getItem('refreshToken') || sessionStorage.getItem('refreshToken');
+  return localStorage.getItem('refreshToken');
 }
 
-/**
- * Clear stored tokens
- */
-export function clearTokens(): void {
+export function clearAuthTokens(): void {
   if (typeof window === 'undefined') return;
-
+  
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('tokenExpiry');
-  sessionStorage.removeItem('accessToken');
-  sessionStorage.removeItem('refreshToken');
-  sessionStorage.removeItem('tokenExpiry');
 }
 
-/**
- * Check if access token is expired
- */
 export function isTokenExpired(): boolean {
   if (typeof window === 'undefined') return true;
-
-  const expiry = localStorage.getItem('tokenExpiry') || sessionStorage.getItem('tokenExpiry');
   
+  const expiry = localStorage.getItem('tokenExpiry');
   if (!expiry) return true;
-
+  
   return Date.now() >= parseInt(expiry, 10);
 }
 
-/**
- * Get authenticated user from token
- */
-export async function getAuthenticatedUser(): Promise<TokenPayload | null> {
-  const token = getAccessToken();
+export async function getValidAccessToken(): Promise<string | null> {
+  const accessToken = getAccessToken();
   
-  if (!token) return null;
-
-  if (isTokenExpired()) {
+  if (!accessToken || isTokenExpired()) {
     const refreshToken = getRefreshToken();
-    
     if (!refreshToken) {
-      clearTokens();
+      clearAuthTokens();
       return null;
     }
-
-    const result = await refreshAccessToken(refreshToken);
     
-    if (!result.success || !result.tokens) {
-      clearTokens();
+    try {
+      const newTokens = await refreshAccessToken(refreshToken);
+      setAuthTokens(newTokens);
+      return newTokens.accessToken;
+    } catch (error) {
+      clearAuthTokens();
       return null;
     }
-
-    storeTokens(result.tokens, !!localStorage.getItem('refreshToken'));
   }
-
-  const verification = await verifyAccessToken(token);
   
-  return verification.valid && verification.payload ? verification.payload : null;
+  return accessToken;
+}
+
+export function hashToken(token: string): string {
+  // Simple hash for demonstration - in production use proper crypto library
+  return Buffer.from(token).toString('base64');
 }
 ```

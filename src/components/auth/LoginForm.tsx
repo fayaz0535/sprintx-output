@@ -1,5 +1,5 @@
 ```typescript
-import React, { useState, FormEvent } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 
 interface LoginFormProps {
@@ -28,6 +28,10 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   const [errors, setErrors] = useState<FormErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [touched, setTouched] = useState<{ email: boolean; password: boolean }>({
+    email: false,
+    password: false,
+  });
 
   const validateEmail = (email: string): string | undefined => {
     if (!email) {
@@ -47,34 +51,94 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
     return undefined;
   };
 
-  const handleEmailBlur = () => {
-    const emailError = validateEmail(formData.email);
-    setErrors((prev) => ({ ...prev, email: emailError }));
+  const handleBlur = (field: 'email' | 'password') => {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    
+    const newErrors: FormErrors = { ...errors };
+    
+    if (field === 'email') {
+      const emailError = validateEmail(formData.email);
+      if (emailError) {
+        newErrors.email = emailError;
+      } else {
+        delete newErrors.email;
+      }
+    }
+    
+    if (field === 'password') {
+      const passwordError = validatePassword(formData.password);
+      if (passwordError) {
+        newErrors.password = passwordError;
+      } else {
+        delete newErrors.password;
+      }
+    }
+    
+    setErrors(newErrors);
   };
 
-  const handlePasswordBlur = () => {
-    const passwordError = validatePassword(formData.password);
-    setErrors((prev) => ({ ...prev, password: passwordError }));
+  const handleChange = (field: keyof FormData, value: string | boolean) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    
+    // Clear general error when user starts typing
+    if (errors.general) {
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        delete newErrors.general;
+        return newErrors;
+      });
+    }
+    
+    // Clear field-specific error when user types
+    if (field === 'email' && touched.email) {
+      const emailError = validateEmail(value as string);
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        if (emailError) {
+          newErrors.email = emailError;
+        } else {
+          delete newErrors.email;
+        }
+        return newErrors;
+      });
+    }
+    
+    if (field === 'password' && touched.password) {
+      const passwordError = validatePassword(value as string);
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        if (passwordError) {
+          newErrors.password = passwordError;
+        } else {
+          delete newErrors.password;
+        }
+        return newErrors;
+      });
+    }
   };
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
+    
+    // Mark all fields as touched
+    setTouched({ email: true, password: true });
+    
     // Validate all fields
     const emailError = validateEmail(formData.email);
     const passwordError = validatePassword(formData.password);
-
-    if (emailError || passwordError) {
-      setErrors({
-        email: emailError,
-        password: passwordError,
-      });
+    
+    const newErrors: FormErrors = {};
+    if (emailError) newErrors.email = emailError;
+    if (passwordError) newErrors.password = passwordError;
+    
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
       return;
     }
-
+    
     setIsSubmitting(true);
     setErrors({});
-
+    
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -87,55 +151,58 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
           remember_me: formData.rememberMe,
         }),
       });
-
+      
       const data = await response.json();
-
+      
       if (!response.ok) {
         if (response.status === 401) {
           setErrors({ general: 'Invalid email or password' });
         } else {
           setErrors({ general: data.message || 'An error occurred. Please try again.' });
         }
+        setIsSubmitting(false);
         return;
       }
-
+      
       // Store tokens
-      if (formData.rememberMe) {
+      if (data.access_token) {
         localStorage.setItem('access_token', data.access_token);
-        localStorage.setItem('refresh_token', data.refresh_token);
-      } else {
-        sessionStorage.setItem('access_token', data.access_token);
-        sessionStorage.setItem('refresh_token', data.refresh_token);
       }
-
-      // Call success callback or redirect
+      if (data.refresh_token) {
+        if (formData.rememberMe) {
+          localStorage.setItem('refresh_token', data.refresh_token);
+        } else {
+          sessionStorage.setItem('refresh_token', data.refresh_token);
+        }
+      }
+      
+      // Call success callback if provided
       if (onSuccess) {
         onSuccess();
-      } else {
-        router.push('/dashboard');
       }
+      
+      // Redirect to dashboard
+      router.push('/dashboard');
     } catch (error) {
-      setErrors({ general: 'An error occurred. Please try again.' });
-    } finally {
+      setErrors({ general: 'Network error. Please check your connection and try again.' });
       setIsSubmitting(false);
     }
   };
 
   const handleForgotPassword = () => {
-    router.push('/auth/forgot-password');
+    router.push('/forgot-password');
   };
 
   return (
-    <div className="w-full max-w-md mx-auto px-4 sm:px-0">
-      <form onSubmit={handleSubmit} className="space-y-6" noValidate>
-        {/* General Error Banner */}
+    <div className="w-full max-w-md mx-auto px-4 sm:px-6">
+      <form onSubmit={handleSubmit} noValidate className="space-y-6">
         {errors.general && (
           <div
             role="alert"
-            className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg"
+            className="bg-red-50 border border-red-200 rounded-md p-4 flex items-start"
           >
             <svg
-              className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5"
+              className="w-5 h-5 text-red-600 mt-0.5 mr-3 flex-shrink-0"
               fill="currentColor"
               viewBox="0 0 20 20"
               aria-hidden="true"
@@ -146,11 +213,10 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
                 clipRule="evenodd"
               />
             </svg>
-            <span className="text-sm text-red-800">{errors.general}</span>
+            <p className="text-sm text-red-800">{errors.general}</p>
           </div>
         )}
 
-        {/* Email Field */}
         <div>
           <label
             htmlFor="email"
@@ -166,43 +232,36 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             required
             disabled={isSubmitting}
             value={formData.email}
-            onChange={(e) =>
-              setFormData((prev) => ({ ...prev, email: e.target.value }))
-            }
-            onBlur={handleEmailBlur}
-            className={`block w-full px-3 py-2 border rounded-md shadow-sm text-base placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors ${
+            onChange={(e) => handleChange('email', e.target.value)}
+            onBlur={() => handleBlur('email')}
+            className={`w-full px-4 py-2.5 border rounded-md text-base text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-offset-0 transition-colors ${
               errors.email
-                ? 'border-red-600 bg-red-50'
-                : 'border-gray-300 bg-white'
-            } ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                ? 'border-red-600 focus:border-red-600 focus:ring-red-600/10'
+                : 'border-gray-300 focus:border-indigo-600 focus:ring-indigo-600/10'
+            } ${isSubmitting ? 'bg-gray-50 cursor-not-allowed' : 'bg-white'}`}
             placeholder="you@example.com"
             aria-invalid={errors.email ? 'true' : 'false'}
             aria-describedby={errors.email ? 'email-error' : undefined}
           />
           {errors.email && (
-            <div
-              id="email-error"
-              role="alert"
-              className="flex items-center gap-1 mt-2 text-sm text-red-600"
-            >
+            <div id="email-error" role="alert" className="mt-2 flex items-start">
               <svg
-                className="w-4 h-4 flex-shrink-0"
+                className="w-4 h-4 text-red-600 mt-0.5 mr-1.5 flex-shrink-0"
                 fill="currentColor"
                 viewBox="0 0 20 20"
                 aria-hidden="true"
               >
                 <path
                   fillRule="evenodd"
-                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
                   clipRule="evenodd"
                 />
               </svg>
-              <span>{errors.email}</span>
+              <p className="text-sm text-red-600">{errors.email}</p>
             </div>
           )}
         </div>
 
-        {/* Password Field */}
         <div>
           <label
             htmlFor="password"
@@ -219,15 +278,13 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
               required
               disabled={isSubmitting}
               value={formData.password}
-              onChange={(e) =>
-                setFormData((prev) => ({ ...prev, password: e.target.value }))
-              }
-              onBlur={handlePasswordBlur}
-              className={`block w-full px-3 py-2 pr-12 border rounded-md shadow-sm text-base placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors ${
+              onChange={(e) => handleChange('password', e.target.value)}
+              onBlur={() => handleBlur('password')}
+              className={`w-full px-4 py-2.5 pr-12 border rounded-md text-base text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-offset-0 transition-colors ${
                 errors.password
-                  ? 'border-red-600 bg-red-50'
-                  : 'border-gray-300 bg-white'
-              } ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  ? 'border-red-600 focus:border-red-600 focus:ring-red-600/10'
+                  : 'border-gray-300 focus:border-indigo-600 focus:ring-indigo-600/10'
+              } ${isSubmitting ? 'bg-gray-50 cursor-not-allowed' : 'bg-white'}`}
               placeholder="••••••••"
               aria-invalid={errors.password ? 'true' : 'false'}
               aria-describedby={errors.password ? 'password-error' : undefined}
@@ -236,41 +293,4 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               disabled={isSubmitting}
-              className="absolute inset-y-0 right-0 flex items-center justify-center w-11 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 rounded-r-md transition-colors"
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-              style={{ minWidth: '44px', minHeight: '44px' }}
-            >
-              {showPassword ? (
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
-                  />
-                </svg>
-              ) : (
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943
+              className="absolute right-0 top-0 h-full px-3 flex items-center justify-center min-w-[44

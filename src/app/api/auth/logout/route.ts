@@ -9,12 +9,12 @@ export async function POST(request: NextRequest) {
 
     if (!accessToken) {
       return NextResponse.json(
-        { error: 'No active session found' },
+        { error: 'No active session' },
         { status: 401 }
       );
     }
 
-    // Call FastAPI backend to invalidate the session
+    // Call backend logout endpoint
     const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     const response = await fetch(`${backendUrl}/api/auth/logout`, {
       method: 'POST',
@@ -25,28 +25,20 @@ export async function POST(request: NextRequest) {
     });
 
     // Clear cookies regardless of backend response
-    // This ensures client-side cleanup even if backend fails
     const responseHeaders = new Headers();
-    
-    responseHeaders.append(
+    responseHeaders.set(
       'Set-Cookie',
-      `access_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
+      'access_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'
     );
-    
     responseHeaders.append(
       'Set-Cookie',
-      `refresh_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
+      'refresh_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'
     );
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Logout failed' }));
-      
-      // Still return success to client since cookies are cleared
-      // But log the backend error
-      console.error('Backend logout failed:', errorData);
-      
+      // Even if backend fails, we clear client-side tokens
       return NextResponse.json(
-        { message: 'Logged out successfully' },
+        { message: 'Logged out (session may still exist on server)' },
         { status: 200, headers: responseHeaders }
       );
     }
@@ -58,21 +50,19 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Logout error:', error);
     
-    // Even on error, clear the cookies to ensure logout
+    // Clear cookies even on error
     const responseHeaders = new Headers();
-    
-    responseHeaders.append(
+    responseHeaders.set(
       'Set-Cookie',
-      `access_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
+      'access_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'
     );
-    
     responseHeaders.append(
       'Set-Cookie',
-      `refresh_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
+      'refresh_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'
     );
 
     return NextResponse.json(
-      { message: 'Logged out successfully' },
+      { message: 'Logged out (client-side only)' },
       { status: 200, headers: responseHeaders }
     );
   }
