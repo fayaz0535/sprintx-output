@@ -1,0 +1,29 @@
+```css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-text: #1f2937;
+  --color-background: #ffffff;
+  --font-family: system-ui, sans-serif;
+  --font-size-base: 16px;
+  --font-weight-normal: 400;
+  --spacing-container: 1rem;
+}
+
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text);
+  background-color: var(--color-background);
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
+```
