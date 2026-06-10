@@ -1,81 +1,125 @@
 ```typescript
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import { randomBytes } from 'crypto';
-import { Pool } from 'pg';
+import { sign } from 'jsonwebtoken';
+import crypto from 'crypto';
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
+const ACCESS_TOKEN_EXPIRY = '15m';
+const REFRESH_TOKEN_EXPIRY_SESSION = '1d';
+const REFRESH_TOKEN_EXPIRY_REMEMBER = '30d';
 
-const ACCESS_TOKEN_EXPIRY = 15 * 60 * 1000; // 15 minutes
-const REFRESH_TOKEN_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
-const REMEMBER_ME_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 days
-
-const MAX_LOGIN_ATTEMPTS = 5;
-const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
-
-function generateToken(): string {
-  return randomBytes(32).toString('hex');
+interface LoginRequestBody {
+  email: string;
+  password: string;
+  rememberMe?: boolean;
 }
 
-async function hashToken(token: string): Promise<string> {
-  return bcrypt.hash(token, 10);
+interface User {
+  id: string;
+  email: string;
+  password_hash: string;
+  created_at: string;
+  updated_at: string;
+  last_login_at: string | null;
 }
 
-async function checkLoginAttempts(email: string, ipAddress: string): Promise<boolean> {
-  const client = await pool.connect();
-  try {
-    const lockoutTime = new Date(Date.now() - LOCKOUT_DURATION);
-    const result = await client.query(
-      `SELECT COUNT(*) as attempts 
-       FROM login_attempts 
-       WHERE email = $1 
-       AND ip_address = $2 
-       AND successful = false 
-       AND attempted_at > $3`,
-      [email, ipAddress, lockoutTime]
-    );
-
-    const attempts = parseInt(result.rows[0].attempts);
-    return attempts < MAX_LOGIN_ATTEMPTS;
-  } finally {
-    client.release();
-  }
+interface Session {
+  id: string;
+  user_id: string;
+  access_token_hash: string;
+  refresh_token_hash: string;
+  expires_at: string;
+  remember_me: boolean;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
 }
 
-async function recordLoginAttempt(
+// Mock database functions - replace with actual database calls
+async function getUserByEmail(email: string): Promise<User | null> {
+  // This would query your PostgreSQL database
+  // For now, returning null to simulate user not found
+  // In production, use a proper database client like 'pg' or an ORM
+  return null;
+}
+
+async function updateLastLogin(userId: string): Promise<void> {
+  // Update users.last_login_at in database
+}
+
+async function createSession(
+  userId: string,
+  accessTokenHash: string,
+  refreshTokenHash: string,
+  expiresAt: Date,
+  rememberMe: boolean,
+  ipAddress: string | null,
+  userAgent: string | null
+): Promise<Session> {
+  // Insert into sessions table and return the created session
+  return {
+    id: crypto.randomUUID(),
+    user_id: userId,
+    access_token_hash: accessTokenHash,
+    refresh_token_hash: refreshTokenHash,
+    expires_at: expiresAt.toISOString(),
+    remember_me: rememberMe,
+    ip_address: ipAddress,
+    user_agent: userAgent,
+    created_at: new Date().toISOString(),
+  };
+}
+
+async function logLoginAttempt(
   email: string,
   ipAddress: string,
   successful: boolean
 ): Promise<void> {
-  const client = await pool.connect();
-  try {
-    await client.query(
-      `INSERT INTO login_attempts (email, ip_address, successful, attempted_at)
-       VALUES ($1, $2, $3, NOW())`,
-      [email, ipAddress, successful]
-    );
-  } finally {
-    client.release();
+  // Insert into login_attempts table
+}
+
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function getClientIp(request: NextRequest): string | null {
+  const forwarded = request.headers.get('x-forwarded-for');
+  const real = request.headers.get('x-real-ip');
+  
+  if (forwarded) {
+    return forwarded.split(',')[0].trim();
   }
+  
+  if (real) {
+    return real;
+  }
+  
+  return null;
 }
 
 export async function POST(request: NextRequest) {
-  const client = await pool.connect();
-
   try {
-    const body = await request.json();
+    const body: LoginRequestBody = await request.json();
     const { email, password, rememberMe = false } = body;
 
-    // Validation
-    if (!email || typeof email !== 'string' || !email.trim()) {
+    // Validate request body
+    if (!email || typeof email !== 'string') {
       return NextResponse.json(
         { error: 'Email is required' },
         { status: 400 }
       );
     }
 
+    if (!password || typeof password !== 'string') {
+      return NextResponse.json(
+        { error: 'Password is required' },
+        { status: 400 }
+      );
+    }
+
+    // Basic email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return NextResponse.json(
@@ -84,116 +128,105 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!password || typeof password !== 'string' || !password.trim()) {
-      return NextResponse.json(
-        { error: 'Password is required' },
-        { status: 400 }
-      );
-    }
+    // Get client IP and user agent
+    const ipAddress = getClientIp(request);
+    const userAgent = request.headers.get('user-agent');
 
-    // Get client IP
-    const ipAddress = request.headers.get('x-forwarded-for')?.split(',')[0] || 
-                     request.headers.get('x-real-ip') || 
-                     'unknown';
+    // Retrieve user from database
+    const user = await getUserByEmail(email.toLowerCase());
 
-    // Check login attempts
-    const canAttempt = await checkLoginAttempts(email, ipAddress);
-    if (!canAttempt) {
-      return NextResponse.json(
-        { error: 'Too many login attempts. Please try again later.' },
-        { status: 429 }
-      );
-    }
-
-    // Find user
-    const userResult = await client.query(
-      'SELECT id, email, password_hash FROM users WHERE email = $1',
-      [email.toLowerCase().trim()]
-    );
-
-    if (userResult.rows.length === 0) {
-      await recordLoginAttempt(email, ipAddress, false);
+    // If user doesn't exist, return generic error (don't reveal which field is wrong)
+    if (!user) {
+      await logLoginAttempt(email.toLowerCase(), ipAddress || 'unknown', false);
       return NextResponse.json(
         { error: 'Invalid email or password' },
         { status: 401 }
       );
     }
-
-    const user = userResult.rows[0];
 
     // Verify password
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
 
-    if (!isValidPassword) {
-      await recordLoginAttempt(email, ipAddress, false);
+    if (!isPasswordValid) {
+      await logLoginAttempt(email.toLowerCase(), ipAddress || 'unknown', false);
       return NextResponse.json(
         { error: 'Invalid email or password' },
         { status: 401 }
       );
     }
 
-    // Record successful login attempt
-    await recordLoginAttempt(email, ipAddress, true);
-
-    // Generate tokens
-    const accessToken = generateToken();
-    const refreshToken = generateToken();
-
-    const accessTokenHash = await hashToken(accessToken);
-    const refreshTokenHash = await hashToken(refreshToken);
-
-    // Calculate expiry
-    const expiresAt = new Date(
-      Date.now() + (rememberMe ? REMEMBER_ME_EXPIRY : REFRESH_TOKEN_EXPIRY)
+    // Generate access token
+    const accessToken = sign(
+      { userId: user.id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: ACCESS_TOKEN_EXPIRY }
     );
 
-    // Get user agent
-    const userAgent = request.headers.get('user-agent') || '';
-
-    // Create session
-    await client.query(
-      `INSERT INTO sessions 
-       (user_id, access_token_hash, refresh_token_hash, expires_at, remember_me, ip_address, user_agent, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-      [user.id, accessTokenHash, refreshTokenHash, expiresAt, rememberMe, ipAddress, userAgent]
+    // Generate refresh token
+    const refreshTokenExpiry = rememberMe ? REFRESH_TOKEN_EXPIRY_REMEMBER : REFRESH_TOKEN_EXPIRY_SESSION;
+    const refreshToken = sign(
+      { userId: user.id, type: 'refresh' },
+      JWT_REFRESH_SECRET,
+      { expiresIn: refreshTokenExpiry }
     );
 
-    // Update last login
-    await client.query(
-      'UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1',
-      [user.id]
+    // Hash tokens for database storage
+    const accessTokenHash = hashToken(accessToken);
+    const refreshTokenHash = hashToken(refreshToken);
+
+    // Calculate session expiry
+    const expiresAt = new Date();
+    if (rememberMe) {
+      expiresAt.setDate(expiresAt.getDate() + 30);
+    } else {
+      expiresAt.setDate(expiresAt.getDate() + 1);
+    }
+
+    // Create session in database
+    await createSession(
+      user.id,
+      accessTokenHash,
+      refreshTokenHash,
+      expiresAt,
+      rememberMe,
+      ipAddress,
+      userAgent
     );
 
-    // Create response with tokens
+    // Update last login timestamp
+    await updateLastLogin(user.id);
+
+    // Log successful login attempt
+    await logLoginAttempt(email.toLowerCase(), ipAddress || 'unknown', true);
+
+    // Set HTTP-only cookies
     const response = NextResponse.json(
       {
-        success: true,
+        message: 'Login successful',
         user: {
           id: user.id,
           email: user.email,
         },
-        accessToken,
-        refreshToken,
       },
       { status: 200 }
     );
 
-    // Set HTTP-only cookies
-    const cookieOptions = {
+    // Set access token cookie
+    response.cookies.set('access_token', accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax' as const,
+      sameSite: 'lax',
+      maxAge: 15 * 60, // 15 minutes
       path: '/',
-    };
-
-    response.cookies.set('accessToken', accessToken, {
-      ...cookieOptions,
-      maxAge: ACCESS_TOKEN_EXPIRY / 1000,
     });
 
-    response.cookies.set('refreshToken', refreshToken, {
-      ...cookieOptions,
-      maxAge: rememberMe ? REMEMBER_ME_EXPIRY / 1000 : REFRESH_TOKEN_EXPIRY / 1000,
+    // Set refresh token cookie
+    response.cookies.set('refresh_token', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: rememberMe ? 30 * 24 * 60 * 60 : 24 * 60 * 60, // 30 days or 1 day
+      path: '/',
     });
 
     return response;
@@ -203,8 +236,6 @@ export async function POST(request: NextRequest) {
       { error: 'An error occurred during login. Please try again.' },
       { status: 500 }
     );
-  } finally {
-    client.release();
   }
 }
 ```

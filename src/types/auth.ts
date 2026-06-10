@@ -5,24 +5,66 @@ export interface LoginCredentials {
   rememberMe?: boolean;
 }
 
-export interface RegisterCredentials {
-  email: string;
-  password: string;
-  confirmPassword?: string;
-}
-
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
 }
 
-export interface User {
+export interface AuthUser {
   id: string;
   email: string;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
+}
+
+export interface AuthState {
+  user: AuthUser | null;
+  tokens: AuthTokens | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: string | null;
+}
+
+export interface LoginResponse {
+  user: AuthUser;
+  tokens: AuthTokens;
+}
+
+export interface RefreshTokenResponse {
+  accessToken: string;
+  expiresAt: string;
+}
+
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ForgotPasswordResponse {
+  message: string;
+}
+
+export interface ResetPasswordRequest {
+  token: string;
+  newPassword: string;
+}
+
+export interface ResetPasswordResponse {
+  message: string;
+}
+
+export interface VerifyTokenResponse {
+  valid: boolean;
+  user?: AuthUser;
+}
+
+export interface LoginAttempt {
+  id: string;
+  email: string;
+  ipAddress: string;
+  successful: boolean;
+  attemptedAt: string;
 }
 
 export interface Session {
@@ -37,54 +79,6 @@ export interface Session {
   createdAt: string;
 }
 
-export interface AuthResponse {
-  user: User;
-  tokens: AuthTokens;
-}
-
-export interface LoginResponse extends AuthResponse {}
-
-export interface RefreshTokenResponse {
-  tokens: AuthTokens;
-}
-
-export interface ForgotPasswordRequest {
-  email: string;
-}
-
-export interface ForgotPasswordResponse {
-  message: string;
-}
-
-export interface ResetPasswordRequest {
-  token: string;
-  newPassword: string;
-  confirmPassword?: string;
-}
-
-export interface ResetPasswordResponse {
-  message: string;
-}
-
-export interface VerifyAuthResponse {
-  valid: boolean;
-  user?: User;
-}
-
-export interface AuthError {
-  message: string;
-  code?: string;
-  field?: string;
-}
-
-export interface LoginAttempt {
-  id: string;
-  email: string;
-  ipAddress: string;
-  successful: boolean;
-  attemptedAt: string;
-}
-
 export interface PasswordResetToken {
   id: string;
   userId: string;
@@ -94,12 +88,10 @@ export interface PasswordResetToken {
   createdAt: string;
 }
 
-export interface AuthState {
-  user: User | null;
-  tokens: AuthTokens | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  error: AuthError | null;
+export interface AuthError {
+  message: string;
+  code?: string;
+  field?: string;
 }
 
 export interface ValidationError {
@@ -107,19 +99,33 @@ export interface ValidationError {
   message: string;
 }
 
-export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'unauthenticated' | 'error';
+export interface LoginFormData {
+  email: string;
+  password: string;
+  rememberMe: boolean;
+}
 
-export interface AuthContextValue {
-  user: User | null;
-  tokens: AuthTokens | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  error: AuthError | null;
+export interface LoginFormErrors {
+  email?: string;
+  password?: string;
+  general?: string;
+}
+
+export type AuthAction =
+  | { type: 'LOGIN_START' }
+  | { type: 'LOGIN_SUCCESS'; payload: LoginResponse }
+  | { type: 'LOGIN_FAILURE'; payload: string }
+  | { type: 'LOGOUT' }
+  | { type: 'REFRESH_TOKEN_SUCCESS'; payload: RefreshTokenResponse }
+  | { type: 'REFRESH_TOKEN_FAILURE' }
+  | { type: 'SET_USER'; payload: AuthUser }
+  | { type: 'CLEAR_ERROR' };
+
+export interface AuthContextType {
+  state: AuthState;
   login: (credentials: LoginCredentials) => Promise<void>;
   logout: () => Promise<void>;
   refreshToken: () => Promise<void>;
-  resetPassword: (request: ResetPasswordRequest) => Promise<void>;
-  forgotPassword: (request: ForgotPasswordRequest) => Promise<void>;
   clearError: () => void;
 }
 ```
